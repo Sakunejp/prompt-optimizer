@@ -39,7 +39,7 @@ import { loadConfig, type MCPServerConfig } from './config/environment.js';
 import * as logger from './utils/logging.js';
 import { ParameterValidator } from './adapters/parameter-adapter.js';
 import { getTemplateOptions, getDefaultTemplateId } from './config/templates.js';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import express from 'express';
 
 // 创建服务器实例的工厂函数
@@ -361,9 +361,16 @@ async function main() {
     const args = process.argv.slice(2);
     const transport = args.find(arg => arg.startsWith('--transport='))?.split('=')[1] || 'stdio';
     const port = parseInt(args.find(arg => arg.startsWith('--port='))?.split('=')[1] || config.httpPort.toString());
+    const host = args.find(arg => arg.startsWith('--host='))?.split('=')[1] || config.httpHost;
+    const authToken = config.authToken;
 
     logger.info('Starting MCP Server for Prompt Optimizer');
-    logger.info(`Transport: ${transport}, Port: ${port}`);
+    logger.info(`Transport: ${transport}, Host: ${host}, Port: ${port}`);
+    if (authToken) {
+      logger.info('Bearer token authentication: ENABLED');
+    } else {
+      logger.warn('Bearer token authentication: DISABLED (set MCP_AUTH_TOKEN to enable)');
+    }
 
     // 初始化 Core 服务（一次性，用于验证配置）
     logger.info('Initializing Core services...');
@@ -377,6 +384,30 @@ async function main() {
       // 使用 Express 和会话管理支持多客户端连接
       const app = express();
       app.use(express.json());
+
+      // Bearer token authentication middleware (applies to /mcp routes only)
+      if (authToken) {
+        const authMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+          const header = req.headers.authorization || '';
+          const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
+          // constant-time comparison to mitigate timing attacks
+          const a = Buffer.from(provided);
+          const b = Buffer.from(authToken);
+          const ok = a.length === b.length && timingSafeEqual(a, b);
+          if (!ok) {
+            res.status(401).json({
+              jsonrpc: '2.0',
+              error: { code: -32001, message: 'Unauthorized' },
+              id: null,
+            });
+            return;
+          }
+          next();
+        };
+        app.use('/mcp', authMiddleware);
+        logger.info('Auth middleware mounted on /mcp');
+      }
+
       logger.info('Express app configured');
 
       // 存储每个会话的传输实例
@@ -459,8 +490,8 @@ async function main() {
       });
 
       logger.info('Setting up HTTP server listener...');
-      app.listen(port, () => {
-        logger.info(`MCP Server running on HTTP port ${port} with session management`);
+      app.listen(port, host, () => {
+        logger.info(`MCP Server running on http://${host}:${port}/mcp with session management`);
       });
       logger.info('HTTP server setup completed');
     } else {
