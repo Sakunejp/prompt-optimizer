@@ -1,0 +1,21 @@
+services:
+  prompt-optimizer-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp-only
+    container_name: prompt-optimizer-mcp
+    restart: unless-stopped
+    # bind only to host loopback — Hermes on the same VPS can reach it,
+    # the public internet cannot.
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      # Gemini as default optimization LLM
+      - VITE_GEMINI_API_KEY=${GOOGLE_API_KEY}
+      - MCP_DEFAULT_MODEL_PROVIDER=gemini
+      # Bearer token required on every /mcp call
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
+      - MCP_LOG_LEVEL=${MCP_LOG_LEVEL:-info}
+      - MCP_DEFAULT_LANGUAGE=${MCP_DEFAULT_LANGUAGE:-zh}
+    security_opt:
+      - no-new-privileges:true

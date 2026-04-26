@@ -1,0 +1,29 @@
+FROM node:22-slim AS base
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN npm install -g corepack@latest && corepack enable
+
+FROM base AS build
+COPY . /app
+WORKDIR /app
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+RUN pnpm --filter @prompt-optimizer/core build
+RUN pnpm --filter @prompt-optimizer/mcp-server build
+
+FROM node:22-slim AS runtime
+WORKDIR /app
+
+# Copy built artifacts and runtime deps
+COPY --from=build /app/packages /app/packages
+COPY --from=build /app/node_modules /app/node_modules
+COPY --from=build /app/package.json /app/package.json
+COPY --from=build /app/pnpm-workspace.yaml /app/pnpm-workspace.yaml
+
+# MCP server defaults
+ENV MCP_HTTP_PORT=3000
+ENV MCP_HTTP_HOST=0.0.0.0
+ENV MCP_LOG_LEVEL=info
+
+WORKDIR /app/packages/mcp-server
+EXPOSE 3000
+CMD ["node", "--require", "./preload-env.cjs", "dist/start.js", "--transport=http"]
